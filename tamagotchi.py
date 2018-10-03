@@ -1,14 +1,14 @@
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sklearn import tree
 
 
 class Tamagotchi:
 
-    eta = {'eat': 4, 'play': 2, 'poop': 3, 'sleep': 12}
-    sleep_time = 6
+    eta = {'eat': 0.75, 'play': 0.41, 'poop': 1, 'sleep': 18}
+    sleep_time = 8
     conf = {
         'eat': [0, datetime.now()],
         'play': [0, datetime.now()],
@@ -65,15 +65,16 @@ class Tamagotchi:
         model = model.fit(x, y)
         return model
 
+    def is_alive(self):
+        return self.conf['live'] > 0
+
     def asleep(self):
         if ((datetime.now() - self.conf['sleep'][1]).total_seconds() / 60 /
-                60) >= self.sleep_time:
+                60) >= self.sleep_time or self.conf['sleep'][0] == 0:
             return False
         return True
 
     def check_status(self):
-        if self.asleep():
-            return
         for key in self.eta.keys():
             if ((datetime.now() - self.conf[key][1]).total_seconds() / 60 /
                     60) >= self.eta[key]:
@@ -81,27 +82,44 @@ class Tamagotchi:
                 if key == 'poop':
                     val = 1
                 self.conf[key] = [val, datetime.now()]
-        self.save()
+        if not self.asleep() and self.is_alive():
+            self.save()
 
-    def run_action(self):
-        if self.asleep():
-            return self.print_resume(6)
-        if self.action == 'e' and self.conf['eat'][0] == 0:
-            self.conf['eat'] = [1, datetime.now()]
-        elif self.action == 'p':
-            self.conf['play'] = [1, datetime.now()]
-        elif self.action == 'c':
-            self.conf['poop'] = [0, datetime.now()]
-        elif self.action == 's':
-            self.conf['sleep'] = [1, datetime.now()]
-        val = [
+    def try_to_wake_up(self):
+        if self.asleep() and self.is_alive():  # Try to wake up
+            if self.action == 'e' and self.conf['eat'][0] == 0:
+                self.conf['sleep'] = [
+                    1, datetime.now() - timedelta(hours=self.sleep_time)
+                ]
+                self.save()
+                return True
+        if not self.asleep() and self.is_alive():
+            return True
+        return False
+
+    def prepare_val(self):
+        actions = {
+            'e': ('eat', 1),
+            'p': ('play', 1),
+            'c': ('poop', 0),
+            's': ('sleep', 1)
+        }
+        action_val = actions.get(self.action, None)
+        if action_val:
+            accept_action = True
+            if action_val[0] == 'eat' and self.conf['eat'][0] > 0:
+                accept_action = False
+            if accept_action:
+                self.conf[action_val[0]] = [action_val[1], datetime.now()]
+        return [
             self.conf['eat'][0], self.conf['play'][0], self.conf['poop'][0],
             self.conf['sleep'][0]
         ]
-        response = self.model.predict([val])[0]
+
+    def update_live_and_lvl(self, response):
         if self.action is not 'r':
             self.conf['live'] = self.conf['live'] - 1 if response in [
-                0, 1, 2
+                0, 1, 2, 3
             ] and self.conf['live'] > 0 else self.conf['live']
             self.conf['live'] = self.conf['live'] + 1 if response in [
                 5
@@ -109,39 +127,68 @@ class Tamagotchi:
             self.conf['lvl'] = int(
                 (datetime.now() - self.conf['start']).total_seconds() / 60 / 60
                 / 24)
-            if self.conf['live'] == 0:
-                print("Game Over")
+
+    def run_action(self):
+        if not self.try_to_wake_up():
+            return self.print_resume(6)
+        val = self.prepare_val()
+        if not self.asleep():
+            response = self.model.predict([val])[0]
+        else:
+            self.action = 'r'
+            response = 6
+        self.update_live_and_lvl(response)
         self.save()
         self.print_resume(response)
 
     def print_resume(self, response):
         print("Live {}       Level {}\n             Status {}".format(
             self.conf['live'], self.conf['lvl'], self.status[response]))
-        if response in [5, 4]:
-            print('''
+        if self.conf['live'] <= 0:
+            print("Game Over")
+            print(self.screen['dead'])
+        elif response in [5]:
+            print(self.screen['happy'])
+        elif response in [4]:
+            print(self.screen['normal'])
+        elif response in [3, 2, 1, 0] and self.conf['poop'][0] == 0:
+            print(self.screen['bad'])
+        elif response in [6]:
+            print(self.screen['sleep'])
+        elif self.conf['poop'][0] == 1:
+            print(self.screen['dirty'])
+
+    screen = {
+        'normal': '''
      .-.
     ( - )
      " "
-            ''')
-        elif response in [3, 2, 1, 0] and self.conf['poop'][0] == 0:
-            print('''
+              ''',
+        'happy': '''
+      _
+    (^-^)
+     " "
+              ''',
+        'bad': '''
      .-. '
     ( - )
      " "
-            ''')
-        elif self.conf['poop'][0] == 1:
-            print('''
-     .-. '   s
-    ( - )  S
-     " "
-            ''')
-        elif response in [6]:
-            print('''
+              ''',
+        'sleep': '''
      _-_   Z
     ( - ) z
      " "
-            ''')
-        # print(clf.predict_proba([val]))
+              ''',
+        'dirty': '''
+     .-. '   s
+    ( - )  S
+     " "
+              ''',
+        'dead': '''
+     _|_
+   ,,,|,,,
+              '''
+    }
 
 
 Tamagotchi()
